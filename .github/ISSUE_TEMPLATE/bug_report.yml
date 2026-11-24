@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in Workbench doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Claude Quad
+        2. Choose iPhone 17 Pro Max and click Connect
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Claude Quad layout, Simulator, Browser / mobile web, Terminal, Chat terminal, Develop (editor/files/git), Claude agent pane, Test Studio, Build / install]
+    validations:
+      required: true
+  - type: input
+    id: workbench
+    attributes:
+      label: Workbench version
+      description: Workbench → About Workbench, or the commit you built from.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "macOS 26.1"
+    validations:
+      required: true
+  - type: input
+    id: xcode
+    attributes:
+      label: Xcode version and simulator runtime
+      description: Required for Simulator issues — run `xcodebuild -version` and note the device + iOS version.
+      placeholder: "Xcode 26.6, iPhone 17 Pro Max / iOS 26.1"

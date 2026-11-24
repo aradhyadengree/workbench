@@ -1,0 +1,16 @@
+# Build products
+.build/
+Workbench.app/
+*.dSYM/
+
+# Xcode / SwiftPM local state
+.swiftpm/
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Release artifacts (scripts/package-release.sh)
+dist/
