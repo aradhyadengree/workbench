@@ -22,11 +22,14 @@ enum WorkspaceViewMode: String, CaseIterable {
 
 struct Workspace: View {
     @ObservedObject var project: Project
+    init(project: Project) {
+        self.project = project
+        _targets = ObservedObject(wrappedValue: project.targets)
+    }
     @StateObject private var browser = Browser()
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
-    @StateObject private var targets = TestTargets()
-    @State private var simulatorID = ""
+    @ObservedObject private var targets: TestTargets
     @State private var fileFilter = ""
     private var viewMode: WorkspaceViewMode { project.viewMode }
 
@@ -237,7 +240,7 @@ struct Workspace: View {
         case .files: sidebar
         case .terminal: TerminalGroup(sessions: project.terminals, folder: project.folder)
         case .browser: BrowserPane(browser: browser)
-        case .simulator: PhoneSimulatorFrame(activeDeviceUDID: $simulatorID, mobileBrowser: targets.phone)
+        case .simulator: PhoneSimulatorFrame(activeDeviceUDID: $project.simulatorUDID, mobileBrowser: targets.phone)
         }
     }
 
@@ -346,7 +349,7 @@ struct Workspace: View {
             switch viewMode {
             case .quad:
                 // Live Desk: chat, phone, browser and shell side by side
-                QuadWorkspace(project: project, targets: targets, simulatorUDID: $simulatorID)
+                QuadWorkspace(project: project)
             case .develop:
                 GeometryReader { bounds in
                     if project.focusMode {
@@ -380,7 +383,7 @@ struct Workspace: View {
                 TestStudio(
                     web: targets.web,
                     phone: targets.phone,
-                    device: $simulatorID,
+                    device: $project.simulatorUDID,
                     storageKey: "productTests." + project.folder.path
                 ).id(project.folder)
             }

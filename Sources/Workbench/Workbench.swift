@@ -80,7 +80,7 @@ final class EditorDocument: ObservableObject, Identifiable {
 
 final class Project: ObservableObject {
     @Published var folder = URL(fileURLWithPath: FileManager.default.currentDirectoryPath) {
-        didSet { if folder != oldValue { cachedChat = nil } }
+        didSet { if folder != oldValue { cachedChat = nil; cachedTestCases = nil } }
     }
     private var cachedChat: ChatConsole?
     var chat: ChatConsole {
@@ -88,6 +88,18 @@ final class Project: ObservableObject {
         let console = ChatConsole(folder: folder)
         cachedChat = console
         return console
+    }
+    // Live Desk state lives here, not in views, because a pane can be shown by the main window
+    // or by its own popped-out window (DeskState.swift) and both must see the same objects.
+    let targets = TestTargets()
+    let desk = DeskState()
+    @Published var simulatorUDID = ""
+    private var cachedTestCases: TestCaseStore?
+    var testCases: TestCaseStore {
+        if let cachedTestCases { return cachedTestCases }
+        let store = TestCaseStore(folder: folder)
+        cachedTestCases = store
+        return store
     }
     @Published var hasFolder = false
     @Published var quickOpen = false
@@ -520,7 +532,7 @@ enum AboutPanel {
 
 final class Lifecycle: NSObject, NSApplicationDelegate {
     // Migration must run before Project() reads its saved layout, folder and modes.
-    let project: Project = { migrateLegacyDefaults(); return Project() }()
+    let project: Project = { migrateLegacyDefaults(); ShellEnvironment.load(); return Project() }()
 
     /// Builds before 0.12.0 used the bundle id "local.workbench.ide", so their settings live in
     /// that defaults domain. Copy them over once; never overwrite anything already saved.
@@ -558,6 +570,21 @@ struct CloseGuard: NSViewRepresentable {
 
 @main struct WorkbenchApp: App {
     @NSApplicationDelegateAdaptor(Lifecycle.self) var lifecycle
+
+    /// Splits the shared terminal sessions, making sure a Terminal pane is on screen to show it:
+    /// Live Desk's shell pane when in Live Desk, otherwise Develop's terminal.
+    private func splitTerminal(_ axis: TerminalSessions.SplitAxis) {
+        let project = lifecycle.project
+        guard project.hasFolder else { project.chooseFolder(); return }
+        if project.viewMode == .quad {
+            project.desk.setVisible(.shell, true, project: project)
+        } else {
+            project.viewMode = .develop
+            project.focusMode = false
+            project.layout.show(.terminal)
+        }
+        project.terminals.splitActive(in: project.folder, axis: axis)
+    }
     
     var body: some Scene {
         Window("Workbench", id: "workspace") {
@@ -576,6 +603,7 @@ struct CloseGuard: NSViewRepresentable {
                 Button("Workbench on GitHub") { NSWorkspace.shared.open(AboutPanel.repository) }
                 Button("Report an Issue…") { NSWorkspace.shared.open(AboutPanel.repository.appendingPathComponent("issues/new/choose")) }
             }
+            LiveDeskCommands(project: lifecycle.project, desk: lifecycle.project.desk)
             CommandMenu("Workspace") {
                 Button("Toggle Files Pane") {
                     let project = lifecycle.project
@@ -646,6 +674,10 @@ struct CloseGuard: NSViewRepresentable {
                     lifecycle.project.layout.show(.terminal)
                     lifecycle.project.terminals.add(in: lifecycle.project.folder)
                 }.keyboardShortcut("t", modifiers: [.control, .shift])
+
+                Button("Split Terminal Right") { splitTerminal(.columns) }.keyboardShortcut("d")
+                Button("Split Terminal Down") { splitTerminal(.rows) }.keyboardShortcut("d", modifiers: [.command, .shift])
+                Button("Unsplit Terminal") { lifecycle.project.terminals.unsplit() }
 
                 Button("Clear Terminal") {
                     lifecycle.project.terminals.active?.clear()

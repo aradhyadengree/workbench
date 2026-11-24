@@ -3,14 +3,55 @@ import WebKit
 import UniformTypeIdentifiers
 import SimulatorHost
 
+/// Shows a long-lived WKWebView (a Browser's page, the chat terminal) that may move between
+/// windows: Live Desk panes pop out into their own windows and dock back.
+///
+/// Guard: SwiftUI must never own the web view itself. A view can have one superview, and when
+/// SwiftUI tears down the old host it removes the view it returned from makeNSView — if that
+/// were the page, it would rip it out of the window it just moved to and leave that blank.
+/// So each host is a plain container; the newest container to appear takes the page
+/// (latest wins), and an old container going away takes nothing with it.
 struct WebSurface: NSViewRepresentable {
     let page: WKWebView
-    func makeNSView(context: Context) -> WKWebView { page }
-    func updateNSView(_ view: WKWebView, context: Context) {}
+    func makeNSView(context: Context) -> WebHost { let host = WebHost(); host.adopt(page); return host }
+    func updateNSView(_ host: WebHost, context: Context) {
+        // Re-adopt only an orphaned page; stealing here would ping-pong between live hosts.
+        if page.superview == nil || host.page !== page { host.adopt(page) }
+    }
+
+    final class WebHost: NSView {
+        private(set) weak var page: WKWebView?
+        func adopt(_ page: WKWebView) {
+            self.page = page
+            guard page.superview !== self else { return }
+            page.removeFromSuperview()
+            page.frame = bounds
+            page.autoresizingMask = [.width, .height]
+            addSubview(page)
+        }
+    }
 }
 
-final class Browser: NSObject, ObservableObject, WKNavigationDelegate {
-    let page = WKWebView()
+final class Browser: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
+    let page: WKWebView = {
+        let config = WKWebViewConfiguration()
+        config.applicationNameForUserAgent = Browser.safariUserAgentSuffix
+        return WKWebView(frame: .zero, configuration: config)
+    }()
+
+    /// WKWebView's default user agent has no "Version/… Safari/…" token, which Google's sign-in
+    /// treats as an embedded (untrusted) browser. Claim the Safari installed on this Mac so
+    /// sign-in pages (Google → claude.ai) behave as they do in Safari.
+    static let safariUserAgentSuffix: String = {
+        let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
+        let version = safari.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String } ?? "18.0"
+        return "Version/\(version) Safari/605.1.15"
+    }()
+
+    /// Real windows for sized pop-ups (OAuth "Continue with Google"). They must stay real
+    /// WKWebViews created from WebKit's configuration so window.opener survives; loading them
+    /// in the main view instead breaks the sign-in hand-back.
+    private var popups: [NSWindow] = []
     @Published var additionalTabs: [Browser] = []
     @Published var selectedTab: ObjectIdentifier?
     @Published var title = "New tab"
@@ -32,16 +73,52 @@ final class Browser: NSObject, ObservableObject, WKNavigationDelegate {
     @Published var address = ""
     @Published var issue = ""
     @Published var started = false
-    override init() { super.init(); page.navigationDelegate = self }
-    func go() {
-        selectedTab = nil
+    override init() { super.init(); page.navigationDelegate = self; page.uiDelegate = self }
+    /// Without a UI delegate WebKit drops every new-window request silently.
+    /// Sized pop-ups (window.open with width/height, which sign-in flows use) get a real window;
+    /// plain target=_blank links load in this same view.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard windowFeatures.width != nil || windowFeatures.height != nil else {
+            if action.targetFrame == nil { webView.load(action.request) }
+            return nil
+        }
+        let size = NSSize(width: CGFloat(truncating: windowFeatures.width ?? 520),
+                          height: CGFloat(truncating: windowFeatures.height ?? 680))
+        let popup = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration)
+        popup.uiDelegate = self
+        let window = NSWindow(contentRect: popup.frame, styleMask: [.titled, .closable, .resizable],
+                              backing: .buffered, defer: false)
+        window.title = action.request.url?.host ?? "Sign in"
+        window.contentView = popup
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        popups.append(window)
+        return popup
+    }
+    /// The page called window.close() (e.g. sign-in finished).
+    func webViewDidClose(_ webView: WKWebView) {
+        popups.first { $0.contentView === webView }?.close()
+    }
+    func windowWillClose(_ notification: Notification) {
+        popups.removeAll { $0 === notification.object as? NSWindow }
+    }
+    /// "localhost:3000" → http://localhost:3000, "example.com" → https://example.com.
+    /// Nil unless the result is an http(s) URL with a host.
+    static func normalize(_ address: String) -> URL? {
         let raw = address.trimmingCharacters(in: .whitespacesAndNewlines)
         let local = ["localhost", "127.0.0.1", "[::1]"].contains { raw.components(separatedBy: "/").first == $0 || raw.hasPrefix($0 + ":") }
         let target = raw.contains("://") ? raw : (local ? "http://" : "https://") + raw
         guard let url = URL(string: target), let host = url.host, !host.isEmpty,
-              ["https", "http"].contains(url.scheme?.lowercased() ?? "") else {
-            issue = "Enter an HTTP or HTTPS address."; return
-        }
+              ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        return url
+    }
+
+    func go() {
+        selectedTab = nil
+        guard let url = Self.normalize(address) else { issue = "Enter an HTTP or HTTPS address."; return }
         started = true; issue = ""; page.load(URLRequest(url: url))
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -90,8 +167,9 @@ private struct BrowserTabLabel: View {
     }
 }
 
-private struct BrowserPage: View {
+struct BrowserPage: View {
     @ObservedObject var browser: Browser
+    var placeholder = "localhost:3000 or a URL"
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         VStack(spacing: 0) {
@@ -108,7 +186,7 @@ private struct BrowserPage: View {
                 Button { browser.address = "" } label: { Image(systemName: "c.circle") }
                     .help("Clear address")
 
-                TextField("localhost:3000 or a URL", text: $browser.address)
+                TextField(placeholder, text: $browser.address)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11, design: .monospaced))
                     .onSubmit { browser.go() }

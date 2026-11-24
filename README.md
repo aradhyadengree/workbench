@@ -34,8 +34,10 @@ in the desktop browser and the phone at once.
 - **Terminal chat.** A full terminal (xterm.js) on the left. Click **Start Claude** to run Claude Code in your project, or **Start shell** for a login shell.
 - **Live iPhone.** Xcode's own simulator display is embedded in the pane, and you can click and drag inside it. Install and launch any simulator `.app`, jump to Home, and capture native-resolution screenshots. You can also switch the phone to **Mobile Web**.
 - **Browser.** A tabbed web preview for `localhost` or any hosted URL.
+- **Test cases.** Two views. **Page** opens your test plan's link (a Claude artifact, a doc, anything) and remembers it per project. It opens inside the pane (sign in to claude.ai once; it's remembered), or pick your own browser (Safari, Chrome, Arc…) from the pane's browser menu. **Checklist** imports test cases you paste or drop in as a `.md`, `.txt` or `.csv` file. Checklists, headings, numbered lists, Markdown tables and CSV all import. Mark each case Passed, Failed or Blocked for **Web** and **Phone**, add notes, then **Copy Results as Markdown** to paste back into Claude or an issue.
 - **Shell.** Multiple shell sessions with one-click shortcuts. When a dev server prints a local URL, a **Preview :port** button appears and loads it into both previews.
-- **Flexible layout.** Drag dividers, swap panes by dragging their titles, move panes above, below or beside each other, or expand one pane to fill a laptop screen.
+- **Flexible layout.** Drag dividers, swap panes by dragging their titles, move panes above, below or beside each other, or expand one pane to fill a laptop screen. **Layout → Testing Layout** puts Terminal chat, Test cases, Simulator and Browser side by side at full height for a test run. The same menu shows or hides any pane and restores the default arrangement.
+- **Pop panes out.** Open any Live Desk pane in its own window (the window button in its header, or ⌥⌘N) and move it to another screen, say your test plan on a portrait monitor. The pane stays live: the page, terminal and chat carry on where they were. Pin a window to keep it on top; **Dock Back** or closing the window returns the pane to its place. Popped-out panes come back where you left them on the next launch.
 
 **Develop** is a lightweight editor around the same project:
 
@@ -93,8 +95,9 @@ The script builds a release binary with Swift Package Manager and packages an ad
 1. Click the folder button in the toolbar (or press **⌘O**), choose your project, and stay in **Live Desk**.
 2. In the lower terminal, start your dev server (`npm run dev`, `rails s`, …). When it prints a local URL, click **Preview :port** to load it in the browser and on the phone. You can also type an address and click **Load both**.
 3. For a native app, choose **iOS Simulator** from the phone pane's target menu, pick a device and click **Connect**. **Install and Launch .app…** accepts any simulator build.
-4. In the chat pane, click **Start Claude** and ask it to fix what you see.
-5. Open **Test Studio** to record what passed on each platform and export a Markdown report.
+4. In the Test cases pane, paste your artifact link into **Page** so the plan sits next to the app. To track verdicts, copy the cases into **Checklist** and mark Web and Phone as you go.
+5. In the chat pane, click **Start Claude** and ask it to fix what failed. **Copy Results as Markdown** gives it the full picture.
+6. Open **Test Studio** to record what passed on each platform and export a Markdown report.
 
 ## Keyboard shortcuts
 
@@ -106,7 +109,15 @@ The script builds a release binary with Swift Package Manager and packages an ad
 | Next / previous tab | ⇧⌘] / ⇧⌘[ | Focus editor | ⌥⌘F |
 | Toggle files pane | ⌘B | Toggle terminal pane | ⌃\` |
 | New terminal | ⌃⇧T | Clear terminal | ⌘K |
+| Split terminal right | ⌘D | Split terminal down | ⇧⌘D |
 | Zoom in / out / reset | ⌘+ / ⌘- / ⌘0 | | |
+
+**Live Desk** (the last pane you clicked is the focused one):
+
+| Action | Shortcut | Action | Shortcut |
+|---|---|---|---|
+| Show/hide Terminal chat, Test cases, Simulator, Browser, Terminal | ⌥⌘1 … ⌥⌘5 | Expand focused pane / show all | ⇧⌘↩ |
+| Pop focused pane out / dock it back | ⌥⌘N | Hide focused pane | ⌘\\ |
 
 ## Privacy
 

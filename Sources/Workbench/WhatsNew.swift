@@ -30,12 +30,14 @@ struct WhatsNew: View {
     private let highlights = [
         Highlight(icon: "rectangle.split.3x1", color: .blue, title: "Live Desk",
                   detail: "The testing desk (formerly Claude Quad): chat, iPhone, browser and shell side by side."),
+        Highlight(icon: "macwindow.on.rectangle", color: .indigo, title: "Pop panes out",
+                  detail: "Open any Live Desk pane in its own window, put it on another screen, and dock it back when you're done (⌥⌘N)."),
+        Highlight(icon: "checklist", color: .teal, title: "Test cases next to your app",
+                  detail: "Open your Claude artifact in your own browser or inside the pane, or paste the cases into a checklist and mark Web and Phone as you test."),
         Highlight(icon: "sparkles", color: .purple, title: "A real Claude agent pane",
                   detail: "Develop → Claude now remembers the conversation, shows each file read, edit and command, and has a Stop button."),
         Highlight(icon: "lock.shield", color: .green, title: "Safe by default",
                   detail: "The agent starts in Read only. Accept edits and Bypass all are explicit choices, and Bypass resets every launch."),
-        Highlight(icon: "cpu", color: .orange, title: "Pick your model",
-                  detail: "Choose Fable, Opus, Sonnet or Haiku, or keep your CLI default."),
         Highlight(icon: "heart", color: .pink, title: "Open source",
                   detail: "Workbench is now MIT licensed. Find the code and report issues from the Help menu."),
     ]

@@ -2,6 +2,8 @@ import SwiftUI
 import ShellPTY
 import AppKit
 
+// === SHELL: one PTY-backed zsh ===
+
 final class Shell: ObservableObject, Identifiable {
     let id = UUID()
     let number: Int
@@ -24,12 +26,26 @@ final class Shell: ObservableObject, Identifiable {
         self.number = number
     }
 
+    private var pendingStart: UUID?
+
+    /// Waits for the user's shell environment (see ShellEnvironment.swift) so the first shell
+    /// already has their PATH; only the latest request runs if several arrive while waiting.
     func start(in folder: URL) {
+        let request = UUID()
+        pendingStart = request
+        ShellEnvironment.whenReady { [weak self] in
+            guard let self, self.pendingStart == request else { return }
+            self.pendingStart = nil
+            self.spawn(in: folder)
+        }
+    }
+
+    private func spawn(in folder: URL) {
         generation = UUID()
         output = ""
         previewDetector = LocalPreviewDetector()
         var fd: Int32 = -1
-        let pid = start_shell(folder.path, &fd)
+        let pid = start_shell(folder.path, &fd, TerminalPaneRC.directory()?.path)
         guard pid > 0 else {
             output = "\u{1b}[31mCould not start zsh in \(folder.path)\u{1b}[0m\n"
             return
@@ -70,6 +86,7 @@ final class Shell: ObservableObject, Identifiable {
     }
 
     func stop() {
+        pendingStart = nil
         generation = UUID()
         reader?.cancel()
         reader = nil
@@ -124,6 +141,8 @@ final class Shell: ObservableObject, Identifiable {
     }
 }
 
+// === SESSIONS: the shells, which one is focused, split state ===
+
 struct TerminalLink: Equatable {
     let url: URL
     let shellNumber: Int
@@ -132,12 +151,46 @@ struct TerminalLink: Equatable {
 final class TerminalSessions: ObservableObject {
     @Published private(set) var previewLinks: [TerminalLink] = []
     @Published private(set) var shells: [Shell] = []
-    @Published var selected: UUID?
+    /// The focused shell: toolbar buttons, ⌘K and the session picker act on it.
+    @Published var selected: UUID? {
+        didSet {
+            // Picking a shell that isn't on screen while split swaps it into the focused slot.
+            guard split.count > 1, let new = selected, !split.contains(new),
+                  let old = oldValue, let slot = split.firstIndex(of: old) else { return }
+            split[slot] = new
+        }
+    }
+    /// Shells shown side by side or stacked (Split Terminal), in order. Fewer than two means
+    /// the pane shows just the selected shell. Not persisted: shells don't survive a relaunch.
+    @Published private(set) var split: [UUID] = []
+    @Published var splitAxis = SplitAxis.columns
+    enum SplitAxis { case columns, rows }
+    static let maxSplits = 4
     private var nextNumber = 1
     
     var active: Shell? { shells.first { $0.id == selected } }
+    var shown: [Shell] {
+        split.count > 1 ? split.compactMap { id in shells.first { $0.id == id } } : active.map { [$0] } ?? []
+    }
 
-    func add(in folder: URL) {
+    /// Adds a new shell beside the focused one and focuses it.
+    func splitActive(in folder: URL, axis: SplitAxis) {
+        guard split.count < Self.maxSplits else { return }
+        let current = selected ?? shells.last?.id
+        let shell = add(in: folder, select: false)
+        var ids = split.count > 1 ? split : [current].compactMap { $0 }
+        let at = current.flatMap { ids.firstIndex(of: $0) }.map { $0 + 1 } ?? ids.count
+        ids.insert(shell.id, at: at)
+        if split.count < 2 { splitAxis = axis }
+        split = ids          // before selecting, so the swap-into-slot rule above doesn't fire
+        selected = shell.id
+    }
+
+    /// Back to one terminal; the other shells keep running and stay in the session picker.
+    func unsplit() { split = [] }
+
+    @discardableResult
+    func add(in folder: URL, select: Bool = true) -> Shell {
         let shell = Shell(number: nextNumber)
         nextNumber += 1
         let number = shell.number
@@ -149,7 +202,8 @@ final class TerminalSessions: ObservableObject {
         }
         shell.start(in: folder)
         shells.append(shell)
-        selected = shell.id
+        if select { selected = shell.id }
+        return shell
     }
 
     func close(_ shell: Shell, in folder: URL) {
@@ -157,21 +211,27 @@ final class TerminalSessions: ObservableObject {
         shell.stop()
         previewLinks.removeAll { $0.shellNumber == shell.number }
         shells.remove(at: index)
+        split.removeAll { $0 == shell.id }
+        if split.count == 1 { split = [] }
         if shells.isEmpty {
             add(in: folder)
         } else if selected == shell.id {
-            selected = shells[min(index, shells.count - 1)].id
+            // Keep focus on screen: the neighbouring split if split, else the neighbouring shell.
+            selected = split.first ?? shells[min(index, shells.count - 1)].id
         }
     }
 
     func reset(in folder: URL) {
         shells.forEach { $0.stop() }
         shells.removeAll()
+        split = []
         previewLinks.removeAll()
         nextNumber = 1
         add(in: folder)
     }
 }
+
+// === VIEWS: pane toolbar, splits, one terminal ===
 
 struct TerminalGroup: View {
     @ObservedObject var sessions: TerminalSessions
@@ -196,6 +256,28 @@ struct TerminalGroup: View {
                         Image(systemName: "plus")
                     }.help("New terminal session")
 
+                    Menu {
+                        // Shortcuts live in Workspace → Split Terminal (Workbench.swift); menu
+                        // items inside a view only fire while the menu is open.
+                        Button("Split Right  ⌘D") { sessions.splitActive(in: folder, axis: .columns) }
+                        Button("Split Down  ⇧⌘D") { sessions.splitActive(in: folder, axis: .rows) }
+                        if sessions.split.count > 1 {
+                            Divider()
+                            Button(sessions.splitAxis == .columns ? "Stack Splits" : "Splits Side by Side") {
+                                sessions.splitAxis = sessions.splitAxis == .columns ? .rows : .columns
+                            }
+                            Button("Unsplit") { sessions.unsplit() }
+                        }
+                    } label: {
+                        Image(systemName: sessions.splitAxis == .rows && sessions.split.count > 1
+                              ? "rectangle.split.1x2" : "rectangle.split.2x1")
+                    } primaryAction: {
+                        sessions.splitActive(in: folder, axis: .columns)
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .disabled(sessions.split.count >= TerminalSessions.maxSplits)
+                    .help("Split terminal (⌘D right, ⇧⌘D down)")
+
                     Button {
                         sessions.active?.clear()
                     } label: {
@@ -209,7 +291,8 @@ struct TerminalGroup: View {
                     }.help("Close terminal session")
                 }
             }
-            if let shell = sessions.active {
+            if sessions.shown.count > 1 { splits }
+            else if let shell = sessions.active {
                 TerminalPane(shell: shell).id(shell.id)
             }
         }
@@ -222,10 +305,39 @@ struct TerminalGroup: View {
             )
         }
     }
+
+    /// Native split views give draggable dividers for free.
+    @ViewBuilder private var splits: some View {
+        if sessions.splitAxis == .columns {
+            HSplitView { ForEach(sessions.shown) { split($0).frame(minWidth: 220) } }
+        } else {
+            VSplitView { ForEach(sessions.shown) { split($0).frame(minHeight: 120) } }
+        }
+    }
+
+    private func split(_ shell: Shell) -> some View {
+        let focused = sessions.selected == shell.id
+        return VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Circle().fill(shell.isRunning ? Color.green : Color.secondary).frame(width: 6, height: 6)
+                Text("zsh " + String(shell.number)).font(.system(size: 11, weight: focused ? .semibold : .regular))
+                Spacer(minLength: 0)
+                Button { closing = shell } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .bold)) }
+                    .buttonStyle(.plain).help("Close this terminal")
+            }
+            .padding(.horizontal, 8).frame(height: 22)
+            .background(focused ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08))
+            .contentShape(Rectangle())
+            .onTapGesture { sessions.selected = shell.id }
+            TerminalPane(shell: shell) { sessions.selected = shell.id }.id(shell.id)
+        }
+    }
 }
 
 struct TerminalPane: View {
     @ObservedObject var shell: Shell
+    /// Called when the user clicks into this terminal's command field (marks its split focused).
+    var onFocus: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -269,7 +381,8 @@ struct TerminalPane: View {
                         text: $shell.command,
                         onCommit: { shell.sendCommand(shell.command) },
                         onUp: { shell.historyPrevious() },
-                        onDown: { shell.historyNext() }
+                        onDown: { shell.historyNext() },
+                        onFocus: onFocus
                     )
 
                     Button("Run") {
@@ -297,6 +410,8 @@ struct TerminalPane: View {
 }
 
 // MARK: - Native AppKit Terminal Output View with ANSI Color Formatting
+// === APPKIT BRIDGES: output renderer, command field ===
+
 struct ANSITerminalView: NSViewRepresentable {
     let output: String
     let isDark: Bool
@@ -342,6 +457,7 @@ struct CommandInputField: NSViewRepresentable {
     let onCommit: () -> Void
     let onUp: () -> Void
     let onDown: () -> Void
+    var onFocus: (() -> Void)? = nil
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: CommandInputField
@@ -369,8 +485,19 @@ struct CommandInputField: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    /// Reports becoming first responder on click, not only on the first keystroke.
+    final class FocusField: NSTextField {
+        var onFocus: (() -> Void)?
+        override func becomeFirstResponder() -> Bool {
+            let became = super.becomeFirstResponder()
+            if became { DispatchQueue.main.async { self.onFocus?() } }
+            return became
+        }
+    }
+
     func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField()
+        let field = FocusField()
+        field.onFocus = onFocus
         field.placeholderString = "Enter command or choose shortcut…"
         field.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         field.isBordered = false
@@ -383,6 +510,7 @@ struct CommandInputField: NSViewRepresentable {
 
     func updateNSView(_ field: NSTextField, context: Context) {
         context.coordinator.parent = self
+        (field as? FocusField)?.onFocus = onFocus
         if field.stringValue != text {
             field.stringValue = text
         }

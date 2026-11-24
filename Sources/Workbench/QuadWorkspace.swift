@@ -1,16 +1,20 @@
+// Live Desk: the side-by-side testing workspace (chat, test cases, simulator, browser, shell).
+// Layout, pop-out windows and focus live in DeskState (DeskState.swift) so a pane can move
+// between this window's grid and its own window without restarting.
+
 import SwiftUI
 
 struct QuadWorkspace: View {
     @ObservedObject var project: Project
-    @ObservedObject var targets: TestTargets
-    @Binding var simulatorUDID: String
+    @ObservedObject private var desk: DeskState
+    @ObservedObject private var targets: TestTargets
     @State private var address = ""
-    @State private var previewRequest = UUID()
-    @State private var mobileWeb = false
-    @State private var focused: DeskTool?
-    @State private var highlighted: DeskTool?
-    @State private var layout = (UserDefaults.standard.data(forKey: "deskLayout")
-        .flatMap { try? JSONDecoder().decode(DeskLayout.self, from: $0) }) ?? DeskLayout()
+
+    init(project: Project) {
+        self.project = project
+        _desk = ObservedObject(wrappedValue: project.desk)
+        _targets = ObservedObject(wrappedValue: project.targets)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,106 +26,182 @@ struct QuadWorkspace: View {
                 LocalPreviewButton(sessions: project.terminals) { url in
                     address = url.absoluteString
                     load()
-                    focused = nil
+                    desk.expanded = nil
                 }
-                Menu("Layout") {
-                    if focused != nil { Button("Show All Panes") { focused = nil } }
-                    Button("Restore Photo Layout") { layout = DeskLayout(); focused = nil }
-                }.fixedSize()
+                Menu("Layout") { layoutMenu }.fixedSize()
             }.padding(7)
             Divider()
-            if let focused { pane(focused) }
-            else {
-                GeometryReader { geo in
-                    let widths = DeskLayout.lengths(geo.size.width, weights: layout.columns.map(\.width), minimum: 164)
-                    HStack(spacing: 0) {
-                        ForEach(Array(layout.columns.enumerated()), id: \.element.id) { index, column in
-                            let weights = column.tools.map { layout.heights[$0] ?? 1 }
-                            let heights = DeskLayout.lengths(geo.size.height, weights: weights, minimum: 95)
-                            VStack(spacing: 0) {
-                                ForEach(Array(column.tools.enumerated()), id: \.element) { row, tool in
-                                    pane(tool).frame(height: heights[row])
-                                    if row + 1 < column.tools.count {
-                                        DeskDivider(vertical: false, space: geo.size.height, minimum: 95, index: row,
-                                                    weights: weights) { pair in
-                                            layout.heights[tool] = pair.0
-                                            layout.heights[column.tools[row + 1]] = pair.1
-                                        }
-                                    }
+            if let expanded = desk.expanded, !desk.isDetached(expanded) { pane(expanded) }
+            else if desk.gridLayout.columns.isEmpty { allDetached }
+            else { grid }
+        }
+        .onAppear { address = targets.web.address; desk.appear(project: project) }
+        .onDisappear { desk.disappear() }
+        .onChange(of: project.folder) { address = ""; project.simulatorUDID = "" }
+    }
+
+    @ViewBuilder private var layoutMenu: some View {
+        if desk.expanded != nil { Button("Show All Panes") { desk.expanded = nil } }
+        Button("Testing Layout") { desk.layout = .testing; desk.expanded = nil }
+            .help("Terminal chat, Test cases, Simulator and Browser side by side at full height")
+        Button("Default Layout") { desk.layout = DeskLayout(); desk.expanded = nil }
+        Section("Panes") {
+            ForEach(DeskTool.allCases, id: \.self) { tool in
+                Toggle(tool.rawValue, isOn: Binding(get: { desk.layout.contains(tool) },
+                                                    set: { desk.setVisible(tool, $0, project: project) }))
+                    // Hiding the last pane would leave an empty desk with no header to recover from.
+                    .disabled(desk.layout.contains(tool) && desk.layout.columns.flatMap(\.tools).count == 1)
+            }
+        }
+        if !desk.detached.isEmpty {
+            Section("Windows") {
+                ForEach(DeskTool.allCases.filter(desk.isDetached), id: \.self) { tool in
+                    Button("Dock " + tool.rawValue) { desk.dock(tool) }
+                }
+                Button("Dock All Windows") { desk.dockAll() }
+            }
+        }
+    }
+
+    private var allDetached: some View {
+        ContentUnavailableView {
+            Label("Every pane is in its own window", systemImage: "macwindow.on.rectangle")
+        } actions: {
+            Button("Dock All Windows") { desk.dockAll() }
+        }
+    }
+
+    private var grid: some View {
+        let layout = desk.gridLayout
+        return GeometryReader { geo in
+            let widths = DeskLayout.lengths(geo.size.width, weights: layout.columns.map(\.width), minimum: 164)
+            HStack(spacing: 0) {
+                ForEach(Array(layout.columns.enumerated()), id: \.element.id) { index, column in
+                    let weights = column.tools.map { layout.heights[$0] ?? 1 }
+                    let heights = DeskLayout.lengths(geo.size.height, weights: weights, minimum: 95)
+                    VStack(spacing: 0) {
+                        ForEach(Array(column.tools.enumerated()), id: \.element) { row, tool in
+                            pane(tool).frame(height: heights[row])
+                            if row + 1 < column.tools.count {
+                                DeskDivider(vertical: false, space: geo.size.height, minimum: 95, index: row,
+                                            weights: weights) { pair in
+                                    desk.layout.heights[tool] = pair.0
+                                    desk.layout.heights[column.tools[row + 1]] = pair.1
                                 }
-                            }.frame(width: widths[index])
-                            if index + 1 < layout.columns.count {
-                                DeskDivider(vertical: true, space: geo.size.width, minimum: 164, index: index,
-                                            weights: layout.columns.map(\.width)) { pair in
-                                    layout.columns[index].width = pair.0
-                                    layout.columns[index + 1].width = pair.1
-                                }
+                            }
+                        }
+                    }.frame(width: widths[index])
+                    if index + 1 < layout.columns.count {
+                        DeskDivider(vertical: true, space: geo.size.width, minimum: 164, index: index,
+                                    weights: layout.columns.map(\.width)) { pair in
+                            // The grid hides popped-out panes, so map back to the real columns by id.
+                            let ids = (column.id, layout.columns[index + 1].id)
+                            if let a = desk.layout.columns.firstIndex(where: { $0.id == ids.0 }),
+                               let b = desk.layout.columns.firstIndex(where: { $0.id == ids.1 }) {
+                                desk.layout.columns[a].width = pair.0
+                                desk.layout.columns[b].width = pair.1
                             }
                         }
                     }
                 }
             }
         }
-        .onAppear { address = targets.web.address }
-        .onChange(of: project.folder) { address = ""; simulatorUDID = "" }
-        .onChange(of: layout) { save() }
     }
 
-    private func save() { UserDefaults.standard.set(try? JSONEncoder().encode(layout), forKey: "deskLayout") }
     private func load() {
         targets.web.address = address; targets.web.go()
         targets.phone.address = address; targets.phone.go()
-        previewRequest = UUID()
-        mobileWeb = true
+        desk.previewRequest = UUID()
+        desk.mobileWeb = true
     }
 
     private func pane(_ tool: DeskTool) -> some View {
-        VStack(spacing: 0) {
+        let isExpanded = desk.expanded == tool
+        // Outline only when there's a choice of pane for keyboard commands to act on.
+        let showsFocus = desk.focused == tool && desk.expanded == nil && desk.gridLayout.columns.flatMap(\.tools).count > 1
+        return VStack(spacing: 0) {
             HStack(spacing: 5) {
                 Label(tool.rawValue, systemImage: "line.3.horizontal")
                     .font(.caption.bold()).lineLimit(1)
                     .draggable("workbench-pane:" + tool.rawValue)
                     .help("Drag onto another pane header to swap positions")
                 Spacer(minLength: 0)
-                if tool == .phone {
-                    Menu {
-                        Button("iOS Simulator") { mobileWeb = false }
-                        Button("Mobile Web") { mobileWeb = true }
-                    } label: { Image(systemName: mobileWeb ? "globe" : "iphone") }
-                    .menuStyle(.borderlessButton).fixedSize().help("Choose phone target")
-                }
+                if tool == .phone { PhoneTargetMenu(desk: desk) }
                 Menu {
+                    Button("Open in New Window") { desk.popOut(tool, project: project) }
+                    Divider()
                     ForEach(DeskLayout.Edge.allCases, id: \.self) { edge in
                         Menu("Move " + edge.rawValue + " of") {
                             ForEach(DeskTool.allCases.filter { $0 != tool }, id: \.self) { other in
-                                Button(other.rawValue) { layout.move(tool, beside: other, edge: edge); focused = nil }
+                                Button(other.rawValue) { desk.layout.move(tool, beside: other, edge: edge); desk.expanded = nil }
                             }
                         }
                     }
+                    Divider()
+                    Button("Hide Pane") { desk.setVisible(tool, false, project: project) }
+                        .disabled(desk.layout.columns.flatMap(\.tools).count == 1)
                 } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).fixedSize().help("Move pane")
-                Button { focused = focused == tool ? nil : tool } label: {
-                    Image(systemName: focused == tool ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                }.buttonStyle(.plain).help(focused == tool ? "Show all panes" : "Expand pane")
+                    .menuStyle(.borderlessButton).fixedSize().help("Pane options")
+                Button { desk.popOut(tool, project: project) } label: { Image(systemName: "macwindow.badge.plus") }
+                    .buttonStyle(.plain).help("Open in a new window, e.g. on another screen (⌥⌘N)")
+                Button { desk.expanded = isExpanded ? nil : tool } label: {
+                    Image(systemName: isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                }.buttonStyle(.plain).help(isExpanded ? "Show all panes (⇧⌘↩)" : "Expand pane (⇧⌘↩)")
             }.padding(.horizontal, 7).frame(height: 27)
-                .background(highlighted == tool ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.12))
+                .background(desk.highlighted == tool ? Color.accentColor.opacity(0.3)
+                            : showsFocus ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.12))
                 .dropDestination(for: String.self) { items, _ in
                     guard let value = items.first, value.hasPrefix("workbench-pane:"),
                           let source = DeskTool(rawValue: String(value.dropFirst(15))), source != tool else { return false }
-                    layout.swap(source, tool); return true
-                } isTargeted: { over in if over { highlighted = tool } else if highlighted == tool { highlighted = nil } }
-            switch tool {
-            case .chat: ChatPane(console: project.chat).id(project.folder)
-            case .phone:
-                if mobileWeb { PhoneSimulatorFrame(activeDeviceUDID: $simulatorUDID, mobileBrowser: targets.phone, sharedAddress: true, webRequest: previewRequest) }
-                else { SimulatorPane(active: $simulatorUDID) }
-            case .web: BrowserPane(browser: targets.web)
-            case .shell: TerminalGroup(sessions: project.terminals, folder: project.folder)
-            }
-        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).clipped()
+                    desk.layout.swap(source, tool); return true
+                } isTargeted: { over in if over { desk.highlighted = tool } else if desk.highlighted == tool { desk.highlighted = nil } }
+            DeskPaneContent(tool: tool, project: project)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).clipped()
+        .background(DeskPaneMarker(tool: tool, desk: desk))
+        .overlay { if showsFocus { Rectangle().strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1.5).allowsHitTesting(false) } }
+    }
+}
+
+/// The live contents of a Live Desk pane, shared by the grid and popped-out windows.
+struct DeskPaneContent: View {
+    let tool: DeskTool
+    @ObservedObject var project: Project
+    @ObservedObject private var desk: DeskState
+    @ObservedObject private var targets: TestTargets
+
+    init(tool: DeskTool, project: Project) {
+        self.tool = tool
+        self.project = project
+        _desk = ObservedObject(wrappedValue: project.desk)
+        _targets = ObservedObject(wrappedValue: project.targets)
     }
 
+    var body: some View {
+        switch tool {
+        case .chat: ChatPane(console: project.chat).id(project.folder)
+        case .phone:
+            if desk.mobileWeb {
+                PhoneSimulatorFrame(activeDeviceUDID: $project.simulatorUDID, mobileBrowser: targets.phone,
+                                    sharedAddress: true, webRequest: desk.previewRequest)
+            } else { SimulatorPane(active: $project.simulatorUDID) }
+        case .web: BrowserPane(browser: targets.web)
+        case .shell: TerminalGroup(sessions: project.terminals, folder: project.folder)
+        case .cases: TestCasesPane(store: project.testCases).id(project.folder)
+        }
+    }
+}
 
+/// iOS Simulator vs Mobile Web for the phone pane.
+struct PhoneTargetMenu: View {
+    @ObservedObject var desk: DeskState
+    var body: some View {
+        Menu {
+            Button("iOS Simulator") { desk.mobileWeb = false }
+            Button("Mobile Web") { desk.mobileWeb = true }
+        } label: { Image(systemName: desk.mobileWeb ? "globe" : "iphone") }
+        .menuStyle(.borderlessButton).fixedSize().help("Choose phone target")
+    }
 }
 
 private struct DeskDivider: View {
