@@ -1,0 +1,28 @@
+# Fast checks on every push and pull request. No build: the app needs macOS + Xcode,
+# so contributors run ./scripts/check.sh locally for that. This job only runs
+# scripts/lint.sh (shellcheck, forbidden files, hidden Unicode, VERSION/CHANGELOG,
+# app invariants) on a cheap Linux runner.
+# Actions are pinned to full commit SHAs (tag in the trailing comment); bump deliberately.
+name: Checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint
+        run: ./scripts/lint.sh

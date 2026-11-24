@@ -15,7 +15,7 @@ First open-source release.
 - MIT license, README, contributing guide, security policy, and issue/PR templates.
 - App icon and an **About Workbench** panel showing the version and license.
 - **Help** menu links to the repository and issue tracker.
-- CI that builds the app on every push and pull request (`scripts/check.sh`).
+- A **Checks** workflow on every push and pull request: shellcheck, forbidden files, hidden Unicode, VERSION/CHANGELOG, and app invariants (`scripts/lint.sh`).
 - Claude agent pane: a real model picker (CLI default, Fable, Opus, Sonnet, Haiku) passed to the CLI.
 - Claude agent pane: follow-up prompts continue the same conversation; **New conversation** starts fresh.
 - Claude agent pane: a **Stop** button, and live activity rows for files read, edits, and commands.

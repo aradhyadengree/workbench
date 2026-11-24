@@ -10,7 +10,8 @@ terminal chat, an embedded iOS Simulator display, a browser, and shells, plus a 
 |---|---|
 | Dev run | `swift run` |
 | Build the .app | `./scripts/build-app.sh` → `./Workbench.app` (gitignored) |
-| The gate (CI runs exactly this) | `./scripts/check.sh` |
+| Fast checks (all CI runs, on Linux) | `./scripts/lint.sh` |
+| Full local gate (lint + build + .app) | `./scripts/check.sh` |
 | Release artifacts | `./scripts/package-release.sh` → `dist/` (universal DMG + zip + SHA256SUMS) |
 
 There are no unit tests yet. Verify UI changes by building and running the app.

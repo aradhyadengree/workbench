@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aradhyadengree/workbench/actions/workflows/ci.yml"><img src="https://github.com/aradhyadengree/workbench/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/aradhyadengree/workbench/actions/workflows/checks.yml"><img src="https://github.com/aradhyadengree/workbench/actions/workflows/checks.yml/badge.svg" alt="Checks"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple" alt="macOS 14+">
   <img src="https://img.shields.io/badge/Swift-5.9%2B-F05138?logo=swift&logoColor=white" alt="Swift 5.9+">

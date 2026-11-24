@@ -11,7 +11,7 @@ git clone https://github.com/aradhyadengree/workbench.git
 cd workbench
 swift run                 # quick dev loop
 ./scripts/build-app.sh    # full Workbench.app with icon and bundled resources
-./scripts/check.sh        # what CI runs; must pass before a PR
+./scripts/check.sh        # lint + build; must pass before a PR (CI runs only the lint part)
 ```
 
 Opening `Package.swift` in Xcode works too.
