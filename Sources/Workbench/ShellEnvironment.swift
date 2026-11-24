@@ -2,9 +2,9 @@
 //
 // Why: an app opened from Finder or the Dock inherits launchd's minimal environment
 // (PATH=/usr/bin:/bin:/usr/sbin:/sbin). Anything the user set up in ~/.zprofile / ~/.zshrc
-// (Homebrew, nvm, pnpm, pyenv, JAVA_HOME…) is missing, so `npm` in the Terminal pane was
-// "command not found". The Terminal pane runs `zsh -f` on purpose (its line-based renderer
-// can't handle custom prompts or ZLE), so it can't source those files itself.
+// (Homebrew, nvm, pnpm, pyenv, JAVA_HOME…) is missing for anything Workbench spawns that
+// doesn't read those files itself: the Claude agent pane, xcrun/simctl, git. (Terminal panes
+// run a login zsh that reads them too; see TerminalPaneRC below.)
 //
 // How: run the user's own shell as an interactive login shell once, print its environment
 // after a marker, and copy it into this process with setenv. Every child Workbench spawns
@@ -108,61 +108,87 @@ enum ShellEnvironment {
 }
 
 
-/// Writes the Terminal pane's zsh startup file (see ShellPTY.c). The pane can't source the
-/// user's ~/.zshrc (its renderer is line-based), so this file adds back only shell functions
-/// an imported environment can't carry, chiefly nvm with .nvmrc switching on cd.
-/// Rewritten whenever the bundled text changes; returns nil (bare `zsh -f`) if it can't be.
+/// Writes the Terminal pane's wrapper dotfiles (ShellPTY.c points ZDOTDIR here for that shell
+/// only), the same technique VS Code uses for shell integration. zsh reads .zshenv, .zprofile
+/// and .zshrc from $ZDOTDIR; each wrapper runs the user's own copy (following a custom ZDOTDIR
+/// their .zshenv sets), and .zshrc then hands ZDOTDIR back so .zlogin and nested shells use
+/// the user's files. Workbench adds one thing after the user's setup: switching Node to a
+/// folder's .nvmrc on cd, unless the user already has nvm's load-nvmrc hook.
+/// Rewritten whenever the bundled text changes; returns nil (the user's dotfiles run directly,
+/// without the Node switching) if the files can't be written.
 enum TerminalPaneRC {
     static func directory() -> URL? {
         guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         let dir = support.appendingPathComponent("Workbench/terminal-zsh", isDirectory: true)
-        let file = dir.appendingPathComponent(".zshrc")
-        if (try? String(contentsOf: file, encoding: .utf8)) == script { return dir }
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try script.write(to: file, atomically: true, encoding: .utf8)
+            for (name, text) in files {
+                let file = dir.appendingPathComponent(name)
+                if (try? String(contentsOf: file, encoding: .utf8)) != text {
+                    try text.write(to: file, atomically: true, encoding: .utf8)
+                }
+            }
             return dir
         } catch { return nil }
     }
 
-    private static let script = #"""
-# Workbench Terminal pane startup. Written by Workbench at launch (TerminalPaneRC in
-# ShellEnvironment.swift); edits here are overwritten.
-#
-# The pane renders output as plain lines, so the user's own ~/.zshrc (prompt themes, ZLE
-# plugins) isn't sourced. Their PATH and other variables are already imported by
-# ShellEnvironment.swift; this file adds only what an environment can't carry: shell functions.
+    private static let header = """
+    # Workbench Terminal pane wrapper (TerminalPaneRC in Workbench's ShellEnvironment.swift).
+    # Rewritten by Workbench at launch; edits here are lost. Runs your own dotfile first.
 
-# Nested zsh sessions the user starts must read their own dotfiles, not this one.
-if [[ -n $WORKBENCH_USER_ZDOTDIR ]]; then export ZDOTDIR=$WORKBENCH_USER_ZDOTDIR; else unset ZDOTDIR; fi
-unset WORKBENCH_USER_ZDOTDIR
+    """
 
-# nvm is a shell function, not a program, so it has to be loaded here. --no-use keeps the
-# imported default Node until a folder asks for another one via .nvmrc.
-export NVM_DIR=${NVM_DIR:-$HOME/.nvm}
-if [[ -s $NVM_DIR/nvm.sh ]]; then
-  source "$NVM_DIR/nvm.sh" --no-use
-  # Switch to a folder's .nvmrc version on cd, and back to the default on leaving it
-  # (nvm's README "Calling nvm use automatically" recipe).
-  _workbench_nvmrc() {
-    local rc=$(nvm_find_nvmrc) current=$(nvm version)
-    if [[ -n $rc ]]; then
-      local want=$(nvm version "$(<"$rc")")
-      if [[ $want == N/A ]]; then
-        print "Node $(<"$rc") from ${rc:h:t}/.nvmrc isn't installed. Run: nvm install"
-      elif [[ $want != $current ]]; then
-        nvm use --silent && print "Using Node $(node -v) from ${rc:h:t}/.nvmrc"
-      fi
-    elif [[ $current != $(nvm version default) ]]; then
-      nvm use default --silent && print "Back to default Node $(node -v)"
-    fi
-  }
-  autoload -U add-zsh-hook
-  add-zsh-hook chpwd _workbench_nvmrc
-  _workbench_nvmrc
-fi
+    private static let files: [(String, String)] = [
+        (".zshenv", header + #"""
+        _wb_zdotdir=$ZDOTDIR
+        ZDOTDIR=${WORKBENCH_USER_ZDOTDIR:-$HOME}
+        unset WORKBENCH_USER_ZDOTDIR
+        [[ -f $ZDOTDIR/.zshenv ]] && source "$ZDOTDIR/.zshenv"
+        # Your .zshenv may move your dotfiles (ZDOTDIR=~/.config/zsh); the next files follow it.
+        _wb_user_zdotdir=$ZDOTDIR
+        ZDOTDIR=$_wb_zdotdir
 
-PS1='%F{38;5;39}%1~%f %F{38;5;82}❯%f '
-PROMPT_EOL_MARK=''
-"""#
+        """#),
+        (".zprofile", header + #"""
+        ZDOTDIR=$_wb_user_zdotdir
+        [[ -f $ZDOTDIR/.zprofile ]] && source "$ZDOTDIR/.zprofile"
+        ZDOTDIR=$_wb_zdotdir
+
+        """#),
+        (".zshrc", header + #"""
+        ZDOTDIR=$_wb_user_zdotdir
+        [[ -f $ZDOTDIR/.zshrc ]] && source "$ZDOTDIR/.zshrc"
+        # /etc/zshrc chose HISTFILE while ZDOTDIR pointed here; share your normal history instead.
+        [[ $HISTFILE == $_wb_zdotdir/* ]] && HISTFILE=$_wb_user_zdotdir/.zsh_history
+        # From here on, .zlogin and any zsh you start read your own dotfiles.
+        if [[ $ZDOTDIR == $HOME ]]; then unset ZDOTDIR; else export ZDOTDIR; fi
+        unset _wb_zdotdir _wb_user_zdotdir
+
+        # Switch Node to a folder's .nvmrc on cd, and back to the default on leaving it
+        # (nvm README, "Calling nvm use automatically"). Skipped if your .zshrc already does it.
+        if (( ! $+functions[nvm] )); then
+          export NVM_DIR=${NVM_DIR:-$HOME/.nvm}
+          [[ -s $NVM_DIR/nvm.sh ]] && source "$NVM_DIR/nvm.sh" --no-use
+        fi
+        if (( $+functions[nvm] && ! $+functions[load-nvmrc] )); then
+          _workbench_nvmrc() {
+            local rc=$(nvm_find_nvmrc) current=$(nvm version)
+            if [[ -n $rc ]]; then
+              local want=$(nvm version "$(<"$rc")")
+              if [[ $want == N/A ]]; then
+                print "Node $(<"$rc") from ${rc:h:t}/.nvmrc isn't installed. Run: nvm install"
+              elif [[ $want != $current ]]; then
+                nvm use --silent && print "Using Node $(node -v) from ${rc:h:t}/.nvmrc"
+              fi
+            elif [[ $current != $(nvm version default) ]]; then
+              nvm use default --silent && print "Back to default Node $(node -v)"
+            fi
+          }
+          autoload -U add-zsh-hook
+          add-zsh-hook chpwd _workbench_nvmrc
+          _workbench_nvmrc
+        fi
+
+        """#),
+    ]
 }

@@ -44,7 +44,7 @@ in the desktop browser and the phone at once.
 - File tree with filtering and Git status badges, tabbed editor with syntax highlighting and line numbers
 - Quick Open (⌘P), find in file, Git branch in the status bar
 - **Claude agent pane**: ask Claude Code about the project and watch its activity (files read, edits, commands) as it works. You choose the model and permission level: *Read only* (default), *Accept edits*, or *Bypass all* (asks for confirmation every launch)
-- Independent terminal sessions in any pane
+- Real terminals (xterm.js running your login zsh: your prompt, aliases and plugins), split up to four ways, with shortcut chips for the project's own commands (`package.json` scripts, `swift build`, `docker compose up -d`…)
 
 **Test Studio** records a check per platform (web and iPhone), keeps the results per project, and
 exports them as a Markdown report with screenshot evidence.
@@ -130,7 +130,7 @@ access. Workbench never sees your credentials.
 ```
 Sources/
   Workbench/       SwiftUI + AppKit app: layouts, panes, editor, Test Studio, Claude agent pane
-    ChatTerminal/  Bundled xterm.js page for the terminal chat pane
+    ChatTerminal/  Bundled xterm.js page behind every terminal pane
   SimulatorHost/   Objective-C bridge to Xcode's simulator display and input (private frameworks)
   ShellPTY/        Small C library that spawns and resizes pseudo-terminal shells
 scripts/           build-app.sh (.app), package-release.sh (DMG + zip), check.sh (CI gate)

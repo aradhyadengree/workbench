@@ -1,23 +1,17 @@
+// Terminal chat pane: an xterm.js terminal (XTerm.swift) running Claude Code or a login shell
+// in the project folder. Started on demand from the pane's buttons, not at launch.
+
 import SwiftUI
-import WebKit
 import ShellPTY
+import WebKit
 
-private final class ConsoleBridge: NSObject, WKScriptMessageHandler {
-    weak var console: ChatConsole?
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.frameInfo.isMainFrame, message.frameInfo.request.url?.isFileURL == true,
-              let data = message.body as? [String: Any], let type = data["type"] as? String else { return }
-        console?.receive(type, value: data["value"])
-    }
-}
-
-final class ChatConsole: NSObject, ObservableObject, WKNavigationDelegate {
-    let page: WKWebView
+final class ChatConsole: ObservableObject {
+    let terminal = XTermPage()
+    var page: WKWebView { terminal.page }
     private let folder: URL
     private var source: DispatchSourceRead?
     private var stream: FileHandle?
     private let input = DispatchQueue(label: "workbench.chat.input")
-    private var columns = 80, rows = 24
     @Published private(set) var ready = false
     @Published private(set) var running = false
     @Published private(set) var started = false
@@ -25,30 +19,14 @@ final class ChatConsole: NSObject, ObservableObject, WKNavigationDelegate {
 
     init(folder: URL) {
         self.folder = folder
-        let config = WKWebViewConfiguration(), bridge = ConsoleBridge()
-        config.userContentController.add(bridge, name: "consoleBridge")
-        page = WKWebView(frame: .zero, configuration: config)
-        super.init()
-        bridge.console = self
-        page.navigationDelegate = self
-        let packaged = Bundle.main.url(forResource: "Workbench_Workbench", withExtension: "bundle").flatMap(Bundle.init(url:))
-        let resources = packaged ?? Bundle.module
-        guard let url = resources.url(forResource: "index", withExtension: "html", subdirectory: "ChatTerminal") else {
-            issue = "Terminal resources are missing from the app."; return
+        issue = terminal.loadIssue ?? ""
+        terminal.onReady = { [weak self] in self?.ready = true }
+        terminal.onInput = { [weak self] data in
+            guard let self, let stream = self.stream else { return }
+            self.input.async { try? stream.write(contentsOf: data) }
         }
-        page.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-    }
-    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
-                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        decisionHandler(action.request.url?.isFileURL == true && action.navigationType == .other ? .allow : .cancel)
-    }
-    fileprivate func receive(_ type: String, value: Any?) {
-        if type == "input", let text = value as? String, let stream {
-            input.async { try? stream.write(contentsOf: Data(text.utf8)) }
-        } else if let size = value as? [Int], size.count == 2, ["size", "ready"].contains(type) {
-            columns = min(4096, max(2, size[0])); rows = min(4096, max(2, size[1]))
-            if let stream { resize_pty(stream.fileDescriptor, Int32(rows), Int32(columns)) }
-            if type == "ready" { ready = true }
+        terminal.onResize = { [weak self] columns, rows in
+            if let stream = self?.stream { resize_pty(stream.fileDescriptor, Int32(rows), Int32(columns)) }
         }
     }
 
@@ -59,7 +37,7 @@ final class ChatConsole: NSObject, ObservableObject, WKNavigationDelegate {
         guard pid > 0 else { issue = "Couldn’t start a terminal in " + folder.path; return }
         issue = ""; started = true; running = true
         DispatchQueue.global().async { var status: Int32 = 0; waitpid(pid, &status, 0) }
-        resize_pty(fd, Int32(rows), Int32(columns))
+        resize_pty(fd, Int32(terminal.rows), Int32(terminal.columns))
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         let reader = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
         stream = handle; source = reader
@@ -73,13 +51,12 @@ final class ChatConsole: NSObject, ObservableObject, WKNavigationDelegate {
                 self.source?.cancel(); self.source = nil; self.stream = nil; self.running = false
                 return
             }
+            // Backpressure: read no more until xterm has parsed this chunk.
             reader.suspend()
-            self.page.callAsyncJavaScript("return await window.writeChunk(chunk)",
-                arguments: ["chunk": Data(bytes.prefix(n)).base64EncodedString()], in: nil, in: .page) { _ in reader.resume() }
+            self.terminal.write(Data(bytes.prefix(n))) { reader.resume() }
         }
         reader.resume()
-        page.window?.makeFirstResponder(page)
-        page.evaluateJavaScript("window.focusConsole()")
+        terminal.focus()
     }
     deinit { source?.cancel() }
 }

@@ -15,7 +15,9 @@ First open-source release.
 - **Layout → Testing Layout**: Terminal chat, Test cases, Simulator and Browser side by side at full height, with the shell hidden.
 - **Layout** menu can show or hide any pane.
 - **Pop-out panes**: open any Live Desk pane in its own window (header button or ⌥⌘N), move it to another screen, pin it on top, and dock it back. Pages, terminals and chats stay live while they move, and popped-out panes reopen where you left them.
-- **Split terminals**: ⌘D splits the Terminal pane side by side, ⇧⌘D stacks it (up to four shells, draggable dividers). Each split is its own shell; the split button's menu stacks, unstacks or unsplits.
+- **Real terminals** in the Terminal pane (Live Desk and Develop): each shell is an xterm.js terminal running your login zsh, so your prompt, aliases, plugins, Ctrl-R, vim and colours work as in Terminal.app, and history is shared with it. Node follows a folder's `.nvmrc` on `cd` when you use nvm.
+- **Split terminals**: ⌘D splits the Terminal pane side by side, ⇧⌘D stacks it (up to four shells, draggable dividers). Each split is its own shell; click one to focus it. The split button's menu stacks, unstacks or unsplits.
+- **Project shortcuts** under the Terminal pane run this project's own commands in the focused shell: `package.json` scripts with its package manager (pnpm, yarn, bun or npm), `swift build`/`swift test`, `cargo`, `go`, `uv`, `just`/`make`, `docker compose up -d`, `./dev.sh` and `git status`, detected from the project folder.
 - **Live Desk** menu with shortcuts: ⌥⌘1–5 show or hide panes, ⇧⌘↩ expands the focused pane, ⌘\\ hides it. The last-clicked pane is outlined as focused.
 - Universal (Apple Silicon + Intel) DMG and zip downloads, built by `scripts/package-release.sh`.
 - A **What's New** sheet that appears once after each update. It's also in the Help menu and the status-bar version button.

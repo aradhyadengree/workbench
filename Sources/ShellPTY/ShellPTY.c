@@ -15,8 +15,8 @@ static pid_t spawn_shell(const char *folder, int *master, int chat, const char *
     while (environ[n]) n++;
     char **env = calloc(n + 15, sizeof(char *));
     if (!env) return -1;
-    // Terminal pane only: zsh reads Workbench's startup file from `zdotdir` (see TerminalPaneRC
-    // in ShellEnvironment.swift), which restores the user's own ZDOTDIR for nested shells.
+    // Terminal pane only: zsh reads Workbench's wrapper dotfiles from `zdotdir` (TerminalPaneRC in
+    // ShellEnvironment.swift). They run the user's own dotfiles, then hand ZDOTDIR back to the user.
     char *zdot = NULL, *userZdot = NULL;
     const char *original = getenv("ZDOTDIR");
     if (zdotdir) {
@@ -48,13 +48,11 @@ static pid_t spawn_shell(const char *folder, int *master, int chat, const char *
     pid_t child = forkpty(master, NULL, NULL, &size);
     if (child == 0) {
         if (chdir(folder) < 0) _exit(126);
-        // No ZLE (+Z) and no /etc/zshrc (no_global_rcs): the pane renders plain lines. With a
-        // startup dir it reads only Workbench's .zshrc there; without one, nothing (-f).
-        char *plain[] = {"zsh", "-f", "+Z", "-o", "no_prompt_sp", "-i", NULL};
-        char *argv[] = {"zsh", "+Z", "-o", "no_prompt_sp", "-o", "no_global_rcs", "-i", NULL};
+        // Every terminal is an xterm.js emulator, so all of them run a real interactive login zsh,
+        // like Terminal.app: the user's prompt, aliases and plugins all work.
         char *login[] = {"zsh", "-il", NULL};
         char *claude[] = {"zsh", "-ilc", "export PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; exec claude", NULL};
-        execve("/bin/zsh", chat == 2 ? claude : chat == 1 ? login : zdot ? argv : plain, env);
+        execve("/bin/zsh", chat == 2 ? claude : login, env);
         _exit(127);
     }
     if (child > 0) fcntl(*master, F_SETFD, FD_CLOEXEC);

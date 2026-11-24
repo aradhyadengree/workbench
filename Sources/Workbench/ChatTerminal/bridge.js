@@ -21,5 +21,8 @@ new ResizeObserver(fit).observe(host);
 window.writeChunk = encoded => new Promise(resolve =>
   terminal.write(Uint8Array.from(atob(encoded), c => c.charCodeAt(0)), () => resolve(true)));
 window.focusConsole = () => terminal.focus();
+window.clearConsole = () => terminal.clear();
+// Lets the app mark this terminal's split as focused when the user clicks into it.
+terminal.textarea.addEventListener("focus", () => send("focus", null));
 fit();
 send("ready", [terminal.cols, terminal.rows]);

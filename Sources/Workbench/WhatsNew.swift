@@ -32,6 +32,8 @@ struct WhatsNew: View {
                   detail: "The testing desk (formerly Claude Quad): chat, iPhone, browser and shell side by side."),
         Highlight(icon: "macwindow.on.rectangle", color: .indigo, title: "Pop panes out",
                   detail: "Open any Live Desk pane in its own window, put it on another screen, and dock it back when you're done (⌥⌘N)."),
+        Highlight(icon: "terminal", color: .orange, title: "Real terminals",
+                  detail: "Every shell runs your own zsh setup in a full terminal. Split it with ⌘D, and run your project's scripts from the shortcut chips."),
         Highlight(icon: "checklist", color: .teal, title: "Test cases next to your app",
                   detail: "Open your Claude artifact in your own browser or inside the pane, or paste the cases into a checklist and mark Web and Phone as you test."),
         Highlight(icon: "sparkles", color: .purple, title: "A real Claude agent pane",
